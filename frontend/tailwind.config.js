@@ -36,6 +36,10 @@ export default {
         'note-bounce': 'note-bounce 2s ease-in-out infinite',
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
+        'ring-breathe': 'ring-breathe 6s ease-in-out infinite',
+        'note-float': 'note-float 7s ease-in-out infinite',
+        'spotlight-sway': 'spotlight-sway 6s ease-in-out infinite',
+        'float-album': 'float-album 10s ease-in-out infinite',
       },
       keyframes: {
         'vinyl-spin': {
@@ -66,6 +70,24 @@ export default {
         'accordion-up': {
           from: { height: 'var(--radix-accordion-content-height)' },
           to: { height: '0' },
+        },
+        'ring-breathe': {
+          '0%, 100%': { transform: 'scale(1)', opacity: '0.8' },
+          '50%': { transform: 'scale(1.15)', opacity: '1' },
+        },
+        'note-float': {
+          '0%, 100%': { transform: 'translateY(0) rotate(0deg)', opacity: '0.1' },
+          '25%': { transform: 'translateY(-25px) rotate(-8deg)', opacity: '0.2' },
+          '75%': { transform: 'translateY(15px) rotate(8deg)', opacity: '0.08' },
+        },
+        'spotlight-sway': {
+          '0%, 100%': { transform: 'rotate(var(--rot, 0deg))', opacity: '0.3' },
+          '50%': { transform: 'rotate(calc(var(--rot, 0deg) + 10deg))', opacity: '0.7' },
+        },
+        'float-album': {
+          '0%, 100%': { transform: 'translateY(0) rotate(var(--rot, 0deg))' },
+          '33%': { transform: 'translateY(-14px) rotate(calc(var(--rot, 0deg) + 3deg))' },
+          '66%': { transform: 'translateY(8px) rotate(calc(var(--rot, 0deg) - 2deg))' },
         },
       },
       boxShadow: {
