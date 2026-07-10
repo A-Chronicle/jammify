@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 249 247 245;
+    --foreground: 26 26 26;
+    --spotify: 29 185 84;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-cream-100 text-gray-900 font-sans antialiased;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-white/70 backdrop-blur-xl border border-white/30 rounded-2xl shadow-glass;
+  }
+
+  .glass-card-dark {
+    @apply bg-black/60 backdrop-blur-xl border border-white/10 rounded-2xl;
+  }
+
+  .btn-primary {
+    @apply bg-spotify-500 text-white font-semibold px-6 py-3 rounded-full 
+           transition-all duration-200 shadow-spotify 
+           hover:bg-spotify-400 hover:shadow-spotify-lg hover:-translate-y-0.5
+           active:translate-y-0;
+  }
+
+  .btn-secondary {
+    @apply bg-transparent text-spotify-500 border-2 border-spotify-500 font-semibold 
+           px-6 py-3 rounded-full transition-all duration-200
+           hover:bg-spotify-500/10;
+  }
+
+  .btn-ghost {
+    @apply bg-transparent text-gray-700 font-medium px-4 py-2 rounded-lg
+           transition-all duration-200 hover:bg-gray-100;
+  }
+
+  .input-field {
+    @apply w-full bg-white/90 border-2 border-gray-200 rounded-xl px-4 py-3 
+           font-medium text-gray-900 placeholder-gray-400
+           transition-all duration-200
+           focus:outline-none focus:border-spotify-500 focus:ring-2 focus:ring-spotify-500/20;
+  }
+
+  .session-card {
+    @apply glass-card p-6 transition-all duration-300
+           hover:-translate-y-1 hover:shadow-xl hover:border-spotify-500/30;
+  }
+
+  .user-avatar {
+    @apply w-12 h-12 rounded-full border-3 border-spotify-500 
+           shadow-[0_0_0_4px_rgba(29,185,84,0.2)];
+  }
+
+  .genre-tag {
+    @apply px-3 py-1 bg-spotify-100 text-spotify-700 rounded-full text-sm font-medium;
+  }
+
+  .status-dot {
+    @apply w-3 h-3 bg-spotify-500 rounded-full animate-pulse;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-gradient-to-r from-spotify-500 to-spotify-300 bg-clip-text text-transparent;
+  }
+
+  .bg-noise {
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  }
+
+  .animate-delay-100 { animation-delay: 100ms; }
+  .animate-delay-200 { animation-delay: 200ms; }
+  .animate-delay-300 { animation-delay: 300ms; }
+  .animate-delay-400 { animation-delay: 400ms; }
+  .animate-delay-500 { animation-delay: 500ms; }
+}
