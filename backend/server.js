@@ -9,6 +9,7 @@ import authRoutes from './src/routes/auth.js'
 import userRoutes from './src/routes/user.js'
 import sessionRoutes from './src/routes/session.js'
 import matchRoutes from './src/routes/matches.js'
+import playbackRoutes from './src/routes/playback.js'
 import { authenticateSocket } from './src/middleware/auth.js'
 
 dotenv.config()
@@ -43,6 +44,7 @@ app.use('/auth', authRoutes)
 app.use('/user', userRoutes)
 app.use('/session', sessionRoutes)
 app.use('/matches', matchRoutes)
+app.use('/playback', playbackRoutes)
 
 // Socket.IO connection handling
 const activeSessions = new Map()
@@ -123,12 +125,51 @@ io.on('connection', (socket) => {
     io.to(sessionCode).emit('queue-removed', trackIndex)
   })
 
-  socket.on('play-track', ({ sessionCode, trackId }) => {
-    // Broadcast playback command to all users
+  socket.on('play-track', ({ sessionCode, track }) => {
+    // Broadcast playback to all users in the session
     io.to(sessionCode).emit('playback-update', {
-      trackId,
-      startedBy: socket.userId,
+      type: 'play',
+      track,
+      startedBy: {
+        id: socket.userId,
+        display_name: socket.user.display_name,
+      },
     })
+  })
+
+  socket.on('pause-track', ({ sessionCode }) => {
+    io.to(sessionCode).emit('playback-update', {
+      type: 'pause',
+      pausedBy: {
+        id: socket.userId,
+        display_name: socket.user.display_name,
+      },
+    })
+  })
+
+  socket.on('resume-track', ({ sessionCode }) => {
+    io.to(sessionCode).emit('playback-update', {
+      type: 'resume',
+      resumedBy: {
+        id: socket.userId,
+        display_name: socket.user.display_name,
+      },
+    })
+  })
+
+  socket.on('skip-track', ({ sessionCode }) => {
+    io.to(sessionCode).emit('playback-update', {
+      type: 'skip',
+      skippedBy: {
+        id: socket.userId,
+        display_name: socket.user.display_name,
+      },
+    })
+  })
+
+  socket.on('sync-playback', ({ sessionCode, playbackState }) => {
+    // Host broadcasts their playback state to all participants
+    socket.to(sessionCode).emit('playback-sync', playbackState)
   })
 
   socket.on('disconnect', () => {

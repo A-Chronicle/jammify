@@ -73,4 +73,15 @@ export const matchAPI = {
   getMatches: (limit = 5) => api.get(`/matches?limit=${limit}`),
 }
 
+// Playback API
+export const playbackAPI = {
+  getCurrent: () => api.get('/playback/current'),
+  search: (query, limit = 10) => api.get(`/playback/search?q=${encodeURIComponent(query)}&limit=${limit}`),
+  play: (trackUri, deviceId = null) => api.put('/playback/play', { trackUri, deviceId }),
+  pause: (deviceId = null) => api.put('/playback/pause', { deviceId }),
+  resume: (deviceId = null) => api.put('/playback/resume', { deviceId }),
+  next: (deviceId = null) => api.post('/playback/next', { deviceId }),
+  previous: (deviceId = null) => api.post('/playback/previous', { deviceId }),
+}
+
 export default api

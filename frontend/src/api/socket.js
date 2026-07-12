@@ -35,8 +35,12 @@ export const connectSocket = (token) => {
     useSessionStore.getState().removeParticipant(userId)
   })
 
-  socket.on('queue-updated', (queue) => {
-    useSessionStore.getState().setQueue(queue)
+  socket.on('queue-updated', (track) => {
+    useSessionStore.getState().addToQueue(track)
+  })
+
+  socket.on('queue-removed', (trackIndex) => {
+    useSessionStore.getState().removeFromQueue(trackIndex)
   })
 
   socket.on('new-message', (message) => {
@@ -44,8 +48,11 @@ export const connectSocket = (token) => {
   })
 
   socket.on('playback-update', (playbackData) => {
-    // Handle playback sync
-    console.log('Playback update:', playbackData)
+    useSessionStore.getState().setPlaybackUpdate(playbackData)
+  })
+
+  socket.on('playback-sync', (playbackState) => {
+    useSessionStore.getState().syncPlayback(playbackState)
   })
 
   return socket
@@ -80,8 +87,24 @@ export const removeFromQueue = (sessionCode, trackIndex) => {
   socket?.emit('remove-from-queue', { sessionCode, trackIndex })
 }
 
-export const playTrack = (sessionCode, trackId) => {
-  socket?.emit('play-track', { sessionCode, trackId })
+export const playTrack = (sessionCode, track) => {
+  socket?.emit('play-track', { sessionCode, track })
+}
+
+export const pauseTrack = (sessionCode) => {
+  socket?.emit('pause-track', { sessionCode })
+}
+
+export const resumeTrack = (sessionCode) => {
+  socket?.emit('resume-track', { sessionCode })
+}
+
+export const skipTrack = (sessionCode) => {
+  socket?.emit('skip-track', { sessionCode })
+}
+
+export const syncPlayback = (sessionCode, playbackState) => {
+  socket?.emit('sync-playback', { sessionCode, playbackState })
 }
 
 export const getSocket = () => socket
