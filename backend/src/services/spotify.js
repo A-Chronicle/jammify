@@ -15,6 +15,7 @@ class SpotifyService {
     const scopes = [
       'user-read-playback-state',
       'user-modify-playback-state',
+      'user-read-currently-playing',
       'user-top-read',
       'user-read-recently-played',
       'playlist-modify-public',
@@ -120,7 +121,7 @@ class SpotifyService {
 
   // Calculate average audio features for a user
   async calculateUserAudioProfile(accessToken) {
-    const tracks = await this.getTopArtists(accessToken, 50)
+    const tracks = await this.getTopTracks(accessToken, 50)
     const trackIds = tracks.map((t) => t.id)
     
     if (trackIds.length === 0) {
@@ -161,6 +162,70 @@ class SpotifyService {
     }
 
     return Array.from(genres)
+  }
+
+  // Get current playback state
+  async getCurrentPlayback(accessToken) {
+    const response = await axios.get(`${SPOTIFY_API}/me/player/currently-playing`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+    return response.data
+  }
+
+  // Search tracks
+  async searchTracks(accessToken, query, limit = 10) {
+    const response = await axios.get(`${SPOTIFY_API}/search`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      params: {
+        q: query,
+        type: 'track',
+        limit,
+      },
+    })
+    return response.data.tracks.items
+  }
+
+  // Play a track
+  async playTrack(accessToken, trackUri, deviceId = null) {
+    const data = { uris: [trackUri] }
+    if (deviceId) data.device_id = deviceId
+
+    await axios.put(`${SPOTIFY_API}/me/player/play`, data, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      params: deviceId ? { device_id: deviceId } : {},
+    })
+  }
+
+  // Pause playback
+  async pausePlayback(accessToken, deviceId = null) {
+    await axios.put(`${SPOTIFY_API}/me/player/pause`, {}, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      params: deviceId ? { device_id: deviceId } : {},
+    })
+  }
+
+  // Resume playback
+  async resumePlayback(accessToken, deviceId = null) {
+    await axios.put(`${SPOTIFY_API}/me/player/play`, {}, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      params: deviceId ? { device_id: deviceId } : {},
+    })
+  }
+
+  // Skip to next track
+  async skipToNext(accessToken, deviceId = null) {
+    await axios.post(`${SPOTIFY_API}/me/player/next`, {}, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      params: deviceId ? { device_id: deviceId } : {},
+    })
+  }
+
+  // Skip to previous track
+  async skipToPrevious(accessToken, deviceId = null) {
+    await axios.post(`${SPOTIFY_API}/me/player/previous`, {}, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      params: deviceId ? { device_id: deviceId } : {},
+    })
   }
 }
 

@@ -30,37 +30,17 @@ router.get('/top-artists', authenticateToken, async (req, res) => {
   try {
     const { limit = 10, time_range = 'medium_term' } = req.query
 
-    // Check if we need to refresh from Spotify
-    const tokenExpires = new Date(req.user.token_expires_at)
-    const now = new Date()
-    
-    let accessToken = req.user.access_token
-    let useMockData = false
-    
-    if (tokenExpires <= now) {
-      // Token expired, try to refresh
-      try {
-        const tokens = await spotifyService.refreshToken(req.user.refresh_token)
-        accessToken = tokens.access_token
-        
-        await pool.query(
-          'UPDATE users SET access_token = $1, token_expires_at = $2 WHERE id = $3',
-          [accessToken, new Date(Date.now() + tokens.expires_in * 1000), req.user.id]
-        )
-      } catch (refreshError) {
-        console.log('Token refresh failed, using cached data')
-        useMockData = true
-      }
-    }
+    // Use access_token from middleware (already refreshed if needed)
+    const accessToken = req.user.access_token
 
-    if (useMockData) {
-      // Return cached artists from database
+    if (!accessToken) {
+      // No token available, return cached artists
       return res.json(req.user.top_artists || [])
     }
 
     try {
       const artists = await spotifyService.getTopArtists(accessToken, parseInt(limit), time_range)
-      
+
       const formattedArtists = artists.map(a => ({
         id: a.id,
         name: a.name,
@@ -85,29 +65,17 @@ router.get('/top-tracks', authenticateToken, async (req, res) => {
   try {
     const { limit = 10, time_range = 'medium_term' } = req.query
 
-    // Check if we need to refresh token
-    const tokenExpires = new Date(req.user.token_expires_at)
-    const now = new Date()
-    
-    let accessToken = req.user.access_token
-    let useMockData = false
-    
-    if (tokenExpires <= now) {
-      try {
-        const tokens = await spotifyService.refreshToken(req.user.refresh_token)
-        accessToken = tokens.access_token
-      } catch (refreshError) {
-        useMockData = true
-      }
-    }
+    // Use access_token from middleware (already refreshed if needed)
+    const accessToken = req.user.access_token
 
-    if (useMockData) {
+    if (!accessToken) {
+      // No token available, return mock tracks
       return res.json(mockTopTracks.slice(0, parseInt(limit)))
     }
 
     try {
       const tracks = await spotifyService.getTopTracks(accessToken, parseInt(limit), time_range)
-      
+
       const formattedTracks = tracks.map(t => ({
         id: t.id,
         name: t.name,
@@ -132,7 +100,7 @@ router.get('/top-tracks', authenticateToken, async (req, res) => {
 // Update user's audio profile
 router.post('/refresh-profile', authenticateToken, async (req, res) => {
   try {
-    // For now, just return success with mock data
+    // For now, just return success with cached data
     res.json({ message: 'Profile refreshed successfully (using cached data)' })
   } catch (error) {
     console.error('Refresh profile error:', error)
