@@ -10,6 +10,8 @@ export const useSessionStore = create((set, get) => ({
   currentTrack: null,
   isPlaying: false,
   playbackUpdate: null,
+  sessionEnded: null,
+  hostChanged: null,
 
   setCurrentSession: (session) => set({ currentSession: session }),
   setSessions: (sessions) => set({ sessions }),
@@ -47,6 +49,16 @@ export const useSessionStore = create((set, get) => ({
     isPlaying: playbackState.isPlaying,
   }),
 
+  setSessionEnded: (endedBy) => set({ sessionEnded: endedBy }),
+
+  setHostChanged: (newHost) => set((state) => ({
+    hostChanged: newHost,
+    participants: state.participants.map(p => ({
+      ...p,
+      is_host: p.id === newHost.id,
+    })),
+  })),
+
   clearSession: () => set({
     currentSession: null,
     participants: [],
@@ -56,5 +68,7 @@ export const useSessionStore = create((set, get) => ({
     currentTrack: null,
     isPlaying: false,
     playbackUpdate: null,
+    sessionEnded: null,
+    hostChanged: null,
   }),
 }))

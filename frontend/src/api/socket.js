@@ -55,6 +55,14 @@ export const connectSocket = (token) => {
     useSessionStore.getState().syncPlayback(playbackState)
   })
 
+  socket.on('session-ended', ({ endedBy }) => {
+    useSessionStore.getState().setSessionEnded(endedBy)
+  })
+
+  socket.on('host-changed', (newHost) => {
+    useSessionStore.getState().setHostChanged(newHost)
+  })
+
   return socket
 }
 
@@ -105,6 +113,14 @@ export const skipTrack = (sessionCode) => {
 
 export const syncPlayback = (sessionCode, playbackState) => {
   socket?.emit('sync-playback', { sessionCode, playbackState })
+}
+
+export const endSession = (sessionCode) => {
+  socket?.emit('end-session', { sessionCode })
+}
+
+export const sendHeartbeat = (sessionCode) => {
+  socket?.emit('heartbeat', { sessionCode })
 }
 
 export const getSocket = () => socket

@@ -172,6 +172,24 @@ io.on('connection', (socket) => {
     socket.to(sessionCode).emit('playback-sync', playbackState)
   })
 
+  socket.on('end-session', ({ sessionCode }) => {
+    // Notify all participants that session is ending
+    io.to(sessionCode).emit('session-ended', {
+      endedBy: socket.user.display_name,
+    })
+
+    // Clean up
+    activeSessions.delete(sessionCode)
+  })
+
+  socket.on('host-transferred', ({ sessionCode, newHost }) => {
+    io.to(sessionCode).emit('host-changed', newHost)
+  })
+
+  socket.on('heartbeat', ({ sessionCode }) => {
+    // Touch session activity — handled by REST endpoint, this is just a trigger
+  })
+
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.userId)
     

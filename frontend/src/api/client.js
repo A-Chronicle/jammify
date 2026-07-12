@@ -57,6 +57,8 @@ export const sessionAPI = {
   getSession: (code) => api.get(`/session/${code}`),
   joinSession: (sessionCode) => api.post('/session/join', { sessionCode }),
   leaveSession: (sessionId) => api.post('/session/leave', { sessionId }),
+  endSession: (sessionId) => api.post('/session/end', { sessionId }),
+  heartbeat: (sessionId) => api.post('/session/heartbeat', { sessionId }),
   getActiveSessions: () => api.get('/session/active'),
 }
 

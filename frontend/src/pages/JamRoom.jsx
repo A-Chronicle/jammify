@@ -1,12 +1,12 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useSessionStore } from '../store/sessionStore'
 import { sessionAPI, playbackAPI } from '../api/client'
-import { connectSocket, joinSession, leaveSession, sendMessage, addToQueue, playTrack, pauseTrack, resumeTrack, skipTrack } from '../api/socket'
+import { connectSocket, joinSession, leaveSession, sendMessage, addToQueue, playTrack, pauseTrack, resumeTrack, skipTrack, endSession, sendHeartbeat } from '../api/socket'
 import {
   ArrowLeft, Send, Users, Music, Disc3, LogOut,
-  Play, Pause, SkipForward, SkipBack, Plus, Search, X
+  Play, Pause, SkipForward, SkipBack, Plus, Search, X, Power
 } from 'lucide-react'
 
 export default function JamRoom() {
@@ -15,7 +15,7 @@ export default function JamRoom() {
   const { user, token } = useAuthStore()
   const {
     currentSession, participants, queue, chatMessages,
-    currentTrack, isPlaying, isConnected,
+    currentTrack, isPlaying, isConnected, sessionEnded, hostChanged,
     setCurrentSession, setParticipants, setCurrentTrack, setIsPlaying
   } = useSessionStore()
 
@@ -24,6 +24,9 @@ export default function JamRoom() {
   const [searchResults, setSearchResults] = useState([])
   const [showSearch, setShowSearch] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
+  const [showEndConfirm, setShowEndConfirm] = useState(false)
+
+  const isHost = currentSession?.host_id === user?.id
 
   useEffect(() => {
     loadSession()
@@ -33,35 +36,34 @@ export default function JamRoom() {
 
     // Poll playback state every 10 seconds
     const playbackInterval = setInterval(fetchCurrentPlayback, 10000)
+    // Send heartbeat every 2 minutes
+    const heartbeatInterval = setInterval(() => {
+      sendHeartbeat(sessionCode)
+      sessionAPI.heartbeat?.(currentSession?.id).catch(() => {})
+    }, 120000)
 
     return () => {
       clearInterval(playbackInterval)
+      clearInterval(heartbeatInterval)
       leaveSession(sessionCode)
     }
   }, [sessionCode, token])
 
-  // Handle playback updates from socket
+  // Handle session ended
   useEffect(() => {
-    const unsub = useSessionStore.subscribe(
-      (state) => state.playbackUpdate,
-      (update) => {
-        if (!update) return
+    if (sessionEnded) {
+      alert(`Session ended by ${sessionEnded}`)
+      navigate('/dashboard')
+    }
+  }, [sessionEnded, navigate])
 
-        if (update.type === 'play' && update.track) {
-          setCurrentTrack(update.track)
-          setIsPlaying(true)
-        } else if (update.type === 'pause') {
-          setIsPlaying(false)
-        } else if (update.type === 'resume') {
-          setIsPlaying(true)
-        } else if (update.type === 'skip') {
-          // Fetch next track
-          fetchCurrentPlayback()
-        }
-      }
-    )
-    return unsub
-  }, [])
+  // Handle host changed
+  useEffect(() => {
+    if (hostChanged) {
+      // Could show a toast notification here
+      console.log('Host changed to:', hostChanged.display_name)
+    }
+  }, [hostChanged])
 
   const loadSession = async () => {
     try {
@@ -92,14 +94,12 @@ export default function JamRoom() {
   const handleSendMessage = (e) => {
     e.preventDefault()
     if (!message.trim()) return
-
     sendMessage(sessionCode, message)
     setMessage('')
   }
 
   const handleTrackSearch = async () => {
     if (!trackSearch.trim()) return
-
     setIsSearching(true)
     try {
       const response = await playbackAPI.search(trackSearch, 10)
@@ -145,6 +145,17 @@ export default function JamRoom() {
   const handleSkipPrevious = async () => {
     try { await playbackAPI.previous() } catch (e) { console.error(e) }
     setTimeout(fetchCurrentPlayback, 1000)
+  }
+
+  const handleEndSession = async () => {
+    if (!isHost) return
+    try {
+      await sessionAPI.endSession(currentSession.id)
+      endSession(sessionCode)
+      navigate('/dashboard')
+    } catch (error) {
+      console.error('Failed to end session:', error)
+    }
   }
 
   const handleLeaveSession = () => {
@@ -195,6 +206,15 @@ export default function JamRoom() {
               <span>{participants.length} listeners</span>
             </div>
             <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            {isHost && (
+              <button
+                onClick={() => setShowEndConfirm(true)}
+                className="flex items-center gap-2 px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors text-sm font-medium"
+              >
+                <Power className="w-4 h-4" />
+                End Session
+              </button>
+            )}
             <button
               onClick={handleLeaveSession}
               className="text-gray-400 hover:text-white transition-colors"
@@ -440,6 +460,35 @@ export default function JamRoom() {
                 <p className="text-gray-400">No results found</p>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* End Session Confirm Modal */}
+      {showEndConfirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-white/10 rounded-2xl w-full max-w-sm p-6 text-center">
+            <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Power className="w-8 h-8 text-red-400" />
+            </div>
+            <h3 className="text-xl font-bold text-white mb-2">End Session?</h3>
+            <p className="text-gray-400 mb-6">
+              This will end the session for all {participants.length} listeners. This cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowEndConfirm(false)}
+                className="flex-1 px-4 py-3 bg-white/10 text-white rounded-xl hover:bg-white/20 transition-colors font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleEndSession}
+                className="flex-1 px-4 py-3 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors font-medium"
+              >
+                End Session
+              </button>
+            </div>
           </div>
         </div>
       )}

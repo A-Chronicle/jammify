@@ -78,7 +78,8 @@ router.get('/:code', authenticateToken, async (req, res) => {
         `SELECT sp.*, u.display_name, u.avatar_url
          FROM session_participants sp
          JOIN users u ON sp.user_id = u.id
-         WHERE sp.session_id = $1`,
+         WHERE sp.session_id = $1
+         ORDER BY sp.joined_at ASC`,
         [session.id]
       )
 
@@ -94,6 +95,7 @@ router.get('/:code', authenticateToken, async (req, res) => {
           current_track_id: session.current_track_id,
           queue: session.queue || [],
           created_at: session.created_at,
+          last_active_at: session.last_active_at,
         },
         participants: participantsResult.rows.map(p => ({
           id: p.user_id,
@@ -173,6 +175,12 @@ router.post('/join', authenticateToken, async (req, res) => {
       [session.id, req.user.id]
     )
 
+    // Update last_active_at
+    await pool.query(
+      'UPDATE jam_sessions SET last_active_at = CURRENT_TIMESTAMP WHERE id = $1',
+      [session.id]
+    )
+
     res.json({
       message: 'Joined session successfully',
       session_code: session.session_code,
@@ -183,7 +191,7 @@ router.post('/join', authenticateToken, async (req, res) => {
   }
 })
 
-// Leave a session
+// Leave a session (with host transfer)
 router.post('/leave', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.body
@@ -192,24 +200,78 @@ router.post('/leave', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Session ID is required' })
     }
 
+    // Check if user is the host
+    const sessionResult = await pool.query(
+      'SELECT host_id FROM jam_sessions WHERE id = $1',
+      [sessionId]
+    )
+
+    if (sessionResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Session not found' })
+    }
+
+    const isHost = sessionResult.rows[0].host_id === req.user.id
+
     // Remove user from session
     await pool.query(
       'DELETE FROM session_participants WHERE session_id = $1 AND user_id = $2',
       [sessionId, req.user.id]
     )
 
-    // Check if session is now empty
+    // Check remaining participants
     const participantCount = await pool.query(
       'SELECT COUNT(*) FROM session_participants WHERE session_id = $1',
       [sessionId]
     )
 
-    if (parseInt(participantCount.rows[0].count) === 0) {
-      // Deactivate empty sessions
+    const remaining = parseInt(participantCount.rows[0].count)
+
+    if (remaining === 0) {
+      // No one left — deactivate session
       await pool.query(
         'UPDATE jam_sessions SET is_active = false WHERE id = $1',
         [sessionId]
       )
+    } else if (isHost) {
+      // Host left — transfer to earliest joiner
+      const nextHost = await pool.query(
+        `SELECT user_id FROM session_participants
+         WHERE session_id = $1
+         ORDER BY joined_at ASC
+         LIMIT 1`,
+        [sessionId]
+      )
+
+      if (nextHost.rows.length > 0) {
+        const newHostId = nextHost.rows[0].user_id
+
+        // Update session host
+        await pool.query(
+          'UPDATE jam_sessions SET host_id = $1 WHERE id = $2',
+          [newHostId, sessionId]
+        )
+
+        // Update participant flags
+        await pool.query(
+          'UPDATE session_participants SET is_host = false WHERE session_id = $1',
+          [sessionId]
+        )
+        await pool.query(
+          'UPDATE session_participants SET is_host = true WHERE session_id = $1 AND user_id = $2',
+          [sessionId, newHostId]
+        )
+
+        // Return the new host info so socket can notify
+        const newHostUser = await pool.query(
+          'SELECT id, display_name FROM users WHERE id = $1',
+          [newHostId]
+        )
+
+        return res.json({
+          message: 'Left session, host transferred',
+          newHost: newHostUser.rows[0] || null,
+        })
+      }
     }
 
     res.json({ message: 'Left session successfully' })
@@ -219,12 +281,103 @@ router.post('/leave', authenticateToken, async (req, res) => {
   }
 })
 
+// End session (host only)
+router.post('/end', authenticateToken, async (req, res) => {
+  try {
+    const { sessionId } = req.body
+
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Session ID is required' })
+    }
+
+    // Verify user is the host
+    const sessionResult = await pool.query(
+      'SELECT host_id FROM jam_sessions WHERE id = $1',
+      [sessionId]
+    )
+
+    if (sessionResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Session not found' })
+    }
+
+    if (sessionResult.rows[0].host_id !== req.user.id) {
+      return res.status(403).json({ error: 'Only the host can end the session' })
+    }
+
+    // Remove all participants
+    await pool.query(
+      'DELETE FROM session_participants WHERE session_id = $1',
+      [sessionId]
+    )
+
+    // Deactivate session
+    await pool.query(
+      'UPDATE jam_sessions SET is_active = false WHERE id = $1',
+      [sessionId]
+    )
+
+    res.json({ message: 'Session ended' })
+  } catch (error) {
+    console.error('End session error:', error)
+    res.status(500).json({ error: 'Failed to end session' })
+  }
+})
+
+// Update session activity (heartbeat)
+router.post('/heartbeat', authenticateToken, async (req, res) => {
+  try {
+    const { sessionId } = req.body
+
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Session ID is required' })
+    }
+
+    await pool.query(
+      'UPDATE jam_sessions SET last_active_at = CURRENT_TIMESTAMP WHERE id = $1 AND is_active = true',
+      [sessionId]
+    )
+
+    res.json({ ok: true })
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update heartbeat' })
+  }
+})
+
+// Cleanup stale sessions (called periodically)
+router.post('/cleanup', authenticateToken, async (req, res) => {
+  try {
+    // End sessions inactive for more than 30 minutes
+    const result = await pool.query(
+      `UPDATE jam_sessions SET is_active = false
+       WHERE is_active = true
+       AND last_active_at < NOW() - INTERVAL '30 minutes'
+       RETURNING id, session_code`
+    )
+
+    // Remove participants from ended sessions
+    for (const session of result.rows) {
+      await pool.query(
+        'DELETE FROM session_participants WHERE session_id = $1',
+        [session.id]
+      )
+    }
+
+    res.json({
+      ended: result.rows.map(s => s.session_code),
+      count: result.rowCount,
+    })
+  } catch (error) {
+    console.error('Cleanup error:', error)
+    res.status(500).json({ error: 'Failed to cleanup sessions' })
+  }
+})
+
 // Get active sessions
 router.get('/', authenticateToken, async (req, res) => {
   try {
     // Get sessions from database
     const result = await pool.query(
-      `SELECT js.*, 
+      `SELECT js.*,
               u.display_name as host_name,
               (SELECT COUNT(*) FROM session_participants sp WHERE sp.session_id = js.id) as participant_count
        FROM jam_sessions js
