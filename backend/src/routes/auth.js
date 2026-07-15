@@ -2,7 +2,6 @@ import express from 'express'
 import jwt from 'jsonwebtoken'
 import { pool } from '../utils/db.js'
 import spotifyService from '../services/spotify.js'
-import { mockUser } from '../utils/mockData.js'
 
 const router = express.Router()
 
@@ -16,19 +15,16 @@ router.get('/callback', async (req, res) => {
   console.log('Callback received, code:', code ? 'present' : 'missing', 'error:', error)
 
   if (error) {
-    console.log('Spotify returned error:', error)
     return res.redirect(`${process.env.FRONTEND_URL}?error=${error}`)
   }
 
   if (!code) {
-    console.log('No code provided')
     return res.redirect(`${process.env.FRONTEND_URL}?error=no_code`)
   }
 
   let tokens
   try {
     tokens = await spotifyService.exchangeCode(code)
-    console.log('Token exchange successful')
   } catch (err) {
     console.log('Token exchange failed:', err.response?.data || err.message)
     return res.redirect(`${process.env.FRONTEND_URL}?error=token_exchange_failed`)
@@ -37,24 +33,14 @@ router.get('/callback', async (req, res) => {
   const { access_token, refresh_token, expires_in } = tokens
 
   let spotifyUser, topArtists, genres, audioFeatures
-
   try {
     spotifyUser = await spotifyService.getUserProfile(access_token)
-    console.log('Got Spotify profile:', spotifyUser.display_name)
     topArtists = await spotifyService.getTopArtists(access_token, 10)
     genres = await spotifyService.getUserGenres(access_token)
     audioFeatures = await spotifyService.calculateUserAudioProfile(access_token)
   } catch (err) {
-    console.log('Spotify API failed, using mock data:', err.response?.status)
-    spotifyUser = {
-      id: 'mock_' + Date.now(),
-      display_name: mockUser.display_name,
-      email: mockUser.email,
-      images: [{ url: mockUser.avatar_url }],
-    }
-    topArtists = mockUser.top_artists
-    genres = mockUser.top_genres
-    audioFeatures = mockUser.audio_features
+    console.log('Spotify API failed:', err.response?.status, err.message)
+    return res.redirect(`${process.env.FRONTEND_URL}?error=spotify_api_failed`)
   }
 
   try {
@@ -72,13 +58,13 @@ router.get('/callback', async (req, res) => {
         [
           spotifyUser.display_name,
           spotifyUser.email,
-          spotifyUser.images?.[0]?.url || mockUser.avatar_url,
+          spotifyUser.images?.[0]?.url || null,
           access_token,
           refresh_token,
           new Date(Date.now() + expires_in * 1000),
           JSON.stringify(topArtists.map(a => ({
             id: a.id, name: a.name,
-            image: a.images?.[0]?.url || a.image,
+            image: a.images?.[0]?.url,
             genres: a.genres, popularity: a.popularity,
           }))),
           JSON.stringify(genres),
@@ -86,7 +72,6 @@ router.get('/callback', async (req, res) => {
           userId,
         ]
       )
-      console.log('Updated user:', userId)
     } else {
       const result = await pool.query(
         `INSERT INTO users (spotify_id, display_name, email, avatar_url, access_token, refresh_token, token_expires_at, top_artists, top_genres, audio_features) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
@@ -94,13 +79,13 @@ router.get('/callback', async (req, res) => {
           spotifyUser.id,
           spotifyUser.display_name,
           spotifyUser.email,
-          spotifyUser.images?.[0]?.url || mockUser.avatar_url,
+          spotifyUser.images?.[0]?.url || null,
           access_token,
           refresh_token,
           new Date(Date.now() + expires_in * 1000),
           JSON.stringify(topArtists.map(a => ({
             id: a.id, name: a.name,
-            image: a.images?.[0]?.url || a.image,
+            image: a.images?.[0]?.url,
             genres: a.genres, popularity: a.popularity,
           }))),
           JSON.stringify(genres),
@@ -108,12 +93,9 @@ router.get('/callback', async (req, res) => {
         ]
       )
       userId = result.rows[0].id
-      console.log('Created user:', userId)
     }
 
     const token = jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '7d' })
-    console.log('JWT created, redirecting to dashboard')
-
     res.redirect(`${process.env.FRONTEND_URL}/callback?token=${token}`)
   } catch (err) {
     console.log('Database error:', err.message)

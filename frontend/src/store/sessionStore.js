@@ -9,18 +9,20 @@ export const useSessionStore = create((set, get) => ({
   isConnected: false,
   currentTrack: null,
   isPlaying: false,
-  playbackUpdate: null,
+  hostId: null,
   sessionEnded: null,
   hostChanged: null,
 
   setCurrentSession: (session) => set({ currentSession: session }),
   setSessions: (sessions) => set({ sessions }),
   setParticipants: (participants) => set({ participants }),
-  setQueue: (queue) => set({ queue }),
-  setChatMessages: (messages) => set({ chatMessages: messages }),
   setConnected: (isConnected) => set({ isConnected }),
   setCurrentTrack: (track) => set({ currentTrack: track }),
   setIsPlaying: (isPlaying) => set({ isPlaying }),
+  setHostId: (hostId) => set({ hostId }),
+
+  setQueue: (queue) => set({ queue }),
+  setChatMessages: (messages) => set({ chatMessages: messages }),
 
   addParticipant: (participant) => set((state) => ({
     participants: [...state.participants, participant]
@@ -30,19 +32,11 @@ export const useSessionStore = create((set, get) => ({
     participants: state.participants.filter(p => p.id !== userId)
   })),
 
-  addToQueue: (track) => set((state) => ({
-    queue: [...state.queue, track]
-  })),
-
-  removeFromQueue: (trackIndex) => set((state) => ({
-    queue: state.queue.filter((_, i) => i !== trackIndex)
-  })),
-
   addMessage: (message) => set((state) => ({
     chatMessages: [...state.chatMessages, message]
   })),
 
-  setPlaybackUpdate: (playbackData) => set({ playbackUpdate: playbackData }),
+  setPlaybackUpdate: (playbackData) => set({ playbackData }),
 
   syncPlayback: (playbackState) => set({
     currentTrack: playbackState.track,
@@ -53,6 +47,7 @@ export const useSessionStore = create((set, get) => ({
 
   setHostChanged: (newHost) => set((state) => ({
     hostChanged: newHost,
+    hostId: newHost.id,
     participants: state.participants.map(p => ({
       ...p,
       is_host: p.id === newHost.id,
@@ -67,7 +62,8 @@ export const useSessionStore = create((set, get) => ({
     isConnected: false,
     currentTrack: null,
     isPlaying: false,
-    playbackUpdate: null,
+    hostId: null,
+    playbackData: null,
     sessionEnded: null,
     hostChanged: null,
   }),

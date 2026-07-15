@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 async function setupDatabase() {
   try {
-    const schemaPath = path.join(__dirname, '../../database/schema.sql')
+    const schemaPath = path.join(__dirname, '../../../database/schema.sql')
     const schema = fs.readFileSync(schemaPath, 'utf8')
     
     await pool.query(schema)

@@ -24,7 +24,10 @@ export const connectSocket = (token) => {
   })
 
   socket.on('session-update', (sessionData) => {
-    useSessionStore.getState().setCurrentSession(sessionData)
+    const store = useSessionStore.getState()
+    store.setCurrentSession(sessionData)
+    store.setParticipants(sessionData.participants)
+    if (sessionData.hostId) store.setHostId(sessionData.hostId)
   })
 
   socket.on('participant-joined', (participant) => {
@@ -35,24 +38,42 @@ export const connectSocket = (token) => {
     useSessionStore.getState().removeParticipant(userId)
   })
 
-  socket.on('queue-updated', (track) => {
-    useSessionStore.getState().addToQueue(track)
+  // ── Queue: full sync from server (replaces local state) ──────
+  socket.on('queue-sync', (queue) => {
+    useSessionStore.getState().setQueue(queue)
   })
 
-  socket.on('queue-removed', (trackIndex) => {
-    useSessionStore.getState().removeFromQueue(trackIndex)
+  // ── Chat: history loaded on join ─────────────────────────────
+  socket.on('chat-history', (messages) => {
+    useSessionStore.getState().setChatMessages(messages)
   })
 
   socket.on('new-message', (message) => {
     useSessionStore.getState().addMessage(message)
   })
 
+  // ── Playback: every user executes on their own Spotify ──────
   socket.on('playback-update', (playbackData) => {
-    useSessionStore.getState().setPlaybackUpdate(playbackData)
+    const store = useSessionStore.getState()
+
+    // Update local UI state
+    if (playbackData.type === 'play' || playbackData.type === 'skip') {
+      store.setCurrentTrack(playbackData.track)
+      store.setIsPlaying(true)
+    } else if (playbackData.type === 'pause') {
+      store.setIsPlaying(false)
+    } else if (playbackData.type === 'resume') {
+      store.setIsPlaying(true)
+    }
   })
 
-  socket.on('playback-sync', (playbackState) => {
-    useSessionStore.getState().syncPlayback(playbackState)
+  // ── Host playback state (for new joiners) ────────────────────
+  socket.on('host-playback-state', (playbackState) => {
+    const store = useSessionStore.getState()
+    if (playbackState.track) {
+      store.setCurrentTrack(playbackState.track)
+    }
+    store.setIsPlaying(playbackState.isPlaying)
   })
 
   socket.on('session-ended', ({ endedBy }) => {
@@ -107,12 +128,8 @@ export const resumeTrack = (sessionCode) => {
   socket?.emit('resume-track', { sessionCode })
 }
 
-export const skipTrack = (sessionCode) => {
-  socket?.emit('skip-track', { sessionCode })
-}
-
-export const syncPlayback = (sessionCode, playbackState) => {
-  socket?.emit('sync-playback', { sessionCode, playbackState })
+export const skipTrack = (sessionCode, nextTrack) => {
+  socket?.emit('skip-track', { sessionCode, nextTrack })
 }
 
 export const endSession = (sessionCode) => {

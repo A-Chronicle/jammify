@@ -1,12 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useSessionStore } from '../store/sessionStore'
 import { sessionAPI, playbackAPI } from '../api/client'
-import { connectSocket, joinSession, leaveSession, sendMessage, addToQueue, playTrack, pauseTrack, resumeTrack, skipTrack, endSession, sendHeartbeat } from '../api/socket'
+import {
+  connectSocket, joinSession, leaveSession, sendMessage,
+  addToQueue, removeFromQueue, playTrack, pauseTrack,
+  resumeTrack, skipTrack, endSession, sendHeartbeat
+} from '../api/socket'
 import {
   ArrowLeft, Send, Users, Music, Disc3, LogOut,
-  Play, Pause, SkipForward, SkipBack, Plus, Search, X, Power
+  Play, Pause, SkipForward, SkipBack, Plus, Search, X, Power, Crown
 } from 'lucide-react'
 
 export default function JamRoom() {
@@ -15,7 +19,7 @@ export default function JamRoom() {
   const { user, token } = useAuthStore()
   const {
     currentSession, participants, queue, chatMessages,
-    currentTrack, isPlaying, isConnected, sessionEnded, hostChanged,
+    currentTrack, isPlaying, isConnected, sessionEnded, hostChanged, hostId,
     setCurrentSession, setParticipants, setCurrentTrack, setIsPlaying
   } = useSessionStore()
 
@@ -25,29 +29,75 @@ export default function JamRoom() {
   const [showSearch, setShowSearch] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
   const [showEndConfirm, setShowEndConfirm] = useState(false)
-
-  const isHost = currentSession?.host_id === user?.id
+  const [actionBy, setActionBy] = useState(null)
+  const chatEndRef = useRef(null)
+  const actionTimeoutRef = useRef(null)
 
   useEffect(() => {
     loadSession()
     connectSocket(token)
     joinSession(sessionCode)
-    fetchCurrentPlayback()
 
-    // Poll playback state every 10 seconds
-    const playbackInterval = setInterval(fetchCurrentPlayback, 10000)
-    // Send heartbeat every 2 minutes
     const heartbeatInterval = setInterval(() => {
       sendHeartbeat(sessionCode)
       sessionAPI.heartbeat?.(currentSession?.id).catch(() => {})
     }, 120000)
 
     return () => {
-      clearInterval(playbackInterval)
       clearInterval(heartbeatInterval)
       leaveSession(sessionCode)
     }
   }, [sessionCode, token])
+
+  // Scroll chat to bottom when new messages arrive
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [chatMessages])
+
+  // Listen for playback updates and execute on own Spotify
+  useEffect(() => {
+    const handlePlaybackUpdate = async (playbackData) => {
+      if (!playbackData) return
+
+      // Show who triggered the action
+      const actor = playbackData.startedBy || playbackData.pausedBy || playbackData.resumedBy || playbackData.skippedBy
+      if (actor && actor.id !== user?.id) {
+        setActionBy(actor.display_name)
+        if (actionTimeoutRef.current) clearTimeout(actionTimeoutRef.current)
+        actionTimeoutRef.current = setTimeout(() => setActionBy(null), 3000)
+      }
+
+      // Execute on own Spotify device
+      try {
+        if (playbackData.type === 'play' && playbackData.track) {
+          await playbackAPI.play(playbackData.track.uri)
+        } else if (playbackData.type === 'pause') {
+          await playbackAPI.pause()
+        } else if (playbackData.type === 'resume') {
+          await playbackAPI.resume()
+        } else if (playbackData.type === 'skip') {
+          if (playbackData.track) {
+            await playbackAPI.play(playbackData.track.uri)
+          } else {
+            await playbackAPI.next()
+          }
+        }
+      } catch (err) {
+        console.error('Failed to execute playback on own device:', err)
+      }
+    }
+
+    // Subscribe to store — check playbackData changes
+    let prevPlayback = useSessionStore.getState().playbackData
+    const unsub = useSessionStore.subscribe((state) => {
+      if (state.playbackData !== prevPlayback) {
+        prevPlayback = state.playbackData
+        handlePlaybackUpdate(state.playbackData)
+      }
+    })
+
+    return unsub
+  }, [user?.id])
 
   // Handle session ended
   useEffect(() => {
@@ -60,7 +110,6 @@ export default function JamRoom() {
   // Handle host changed
   useEffect(() => {
     if (hostChanged) {
-      // Could show a toast notification here
       console.log('Host changed to:', hostChanged.display_name)
     }
   }, [hostChanged])
@@ -73,21 +122,6 @@ export default function JamRoom() {
     } catch (error) {
       console.error('Failed to load session:', error)
       navigate('/dashboard')
-    }
-  }
-
-  const fetchCurrentPlayback = async () => {
-    try {
-      const response = await playbackAPI.getCurrent()
-      if (response.data.track) {
-        setCurrentTrack(response.data.track)
-        setIsPlaying(response.data.is_playing)
-      } else {
-        setCurrentTrack(null)
-        setIsPlaying(false)
-      }
-    } catch (error) {
-      console.error('Failed to fetch playback:', error)
     }
   }
 
@@ -118,12 +152,23 @@ export default function JamRoom() {
     setSearchResults([])
   }
 
-  const handlePlayTrack = (track) => {
+  const handleRemoveFromQueue = (index) => {
+    removeFromQueue(sessionCode, index)
+  }
+
+  // Play a track from queue — broadcast to all, execute on own device
+  const handlePlayTrack = async (track) => {
     playTrack(sessionCode, track)
     setCurrentTrack(track)
     setIsPlaying(true)
+    try {
+      await playbackAPI.play(track.uri)
+    } catch (err) {
+      console.error('Failed to play on own device:', err)
+    }
   }
 
+  // Toggle play/pause — broadcast to all, execute on own device
   const handleTogglePlayPause = async () => {
     if (isPlaying) {
       pauseTrack(sessionCode)
@@ -136,19 +181,27 @@ export default function JamRoom() {
     }
   }
 
+  // Skip to next — broadcast to all, execute on own device
   const handleSkipNext = async () => {
-    skipTrack(sessionCode)
-    try { await playbackAPI.next() } catch (e) { console.error(e) }
-    setTimeout(fetchCurrentPlayback, 1000)
+    const nextTrack = queue.length > 0 ? queue[0] : null
+    skipTrack(sessionCode, nextTrack)
+    if (nextTrack) {
+      setCurrentTrack(nextTrack)
+      setIsPlaying(true)
+      // Remove first track from queue
+      removeFromQueue(sessionCode, 0)
+      try { await playbackAPI.play(nextTrack.uri) } catch (e) { console.error(e) }
+    } else {
+      setIsPlaying(false)
+      try { await playbackAPI.next() } catch (e) { console.error(e) }
+    }
   }
 
   const handleSkipPrevious = async () => {
     try { await playbackAPI.previous() } catch (e) { console.error(e) }
-    setTimeout(fetchCurrentPlayback, 1000)
   }
 
   const handleEndSession = async () => {
-    if (!isHost) return
     try {
       await sessionAPI.endSession(currentSession.id)
       endSession(sessionCode)
@@ -172,7 +225,7 @@ export default function JamRoom() {
 
   if (!currentSession) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-900">
+      <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-primary)' }}>
         <div className="animate-spin">
           <Disc3 className="w-12 h-12 text-spotify-500" />
         </div>
@@ -186,10 +239,7 @@ export default function JamRoom() {
       <header className="bg-black/30 backdrop-blur-lg border-b border-white/10 sticky top-0 z-50">
         <div className="container mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <button
-              onClick={handleLeaveSession}
-              className="text-gray-400 hover:text-white transition-colors"
-            >
+            <button onClick={handleLeaveSession} className="text-gray-400 hover:text-white transition-colors">
               <ArrowLeft className="w-6 h-6" />
             </button>
             <div>
@@ -206,19 +256,11 @@ export default function JamRoom() {
               <span>{participants.length} listeners</span>
             </div>
             <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-            {isHost && (
-              <button
-                onClick={() => setShowEndConfirm(true)}
-                className="flex items-center gap-2 px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors text-sm font-medium"
-              >
-                <Power className="w-4 h-4" />
-                End Session
-              </button>
-            )}
-            <button
-              onClick={handleLeaveSession}
-              className="text-gray-400 hover:text-white transition-colors"
-            >
+            <button onClick={() => setShowEndConfirm(true)}
+              className="flex items-center gap-2 px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors text-sm font-medium">
+              <Power className="w-4 h-4" /> End Session
+            </button>
+            <button onClick={handleLeaveSession} className="text-gray-400 hover:text-white transition-colors">
               <LogOut className="w-5 h-5" />
             </button>
           </div>
@@ -236,15 +278,17 @@ export default function JamRoom() {
                 <span className="text-sm text-gray-400">
                   {isPlaying ? 'Now Playing' : 'Paused'}
                 </span>
+                {actionBy && (
+                  <span className="text-xs text-spotify-400 ml-2">
+                    {actionBy} is controlling playback
+                  </span>
+                )}
               </div>
 
               {currentTrack ? (
                 <div className="flex items-center gap-6">
-                  <img
-                    src={currentTrack.album_art}
-                    alt={currentTrack.name}
-                    className="w-32 h-32 rounded-xl object-cover shadow-lg"
-                  />
+                  <img src={currentTrack.album_art} alt={currentTrack.name}
+                    className="w-32 h-32 rounded-xl object-cover shadow-lg" />
                   <div className="flex-1 min-w-0">
                     <h2 className="text-2xl font-bold text-white mb-1 truncate">{currentTrack.name}</h2>
                     <p className="text-gray-400 truncate">{currentTrack.artist}</p>
@@ -264,26 +308,17 @@ export default function JamRoom() {
 
               {/* Playback Controls */}
               <div className="flex items-center justify-center gap-6 mt-8">
-                <button
-                  onClick={handleSkipPrevious}
-                  className="text-gray-400 hover:text-white transition-colors"
-                >
+                <button onClick={handleSkipPrevious} className="text-gray-400 hover:text-white transition-colors">
                   <SkipBack className="w-8 h-8" />
                 </button>
-                <button
-                  onClick={handleTogglePlayPause}
-                  className="w-16 h-16 bg-spotify-500 rounded-full flex items-center justify-center hover:bg-spotify-400 transition-all hover:scale-105 shadow-lg shadow-spotify-500/30"
-                >
-                  {isPlaying ? (
-                    <Pause className="w-8 h-8 text-white" />
-                  ) : (
-                    <Play className="w-8 h-8 text-white ml-1" />
-                  )}
+                <button onClick={handleTogglePlayPause}
+                  className="w-16 h-16 bg-spotify-500 rounded-full flex items-center justify-center hover:bg-spotify-400 transition-all hover:scale-105 shadow-lg shadow-spotify-500/30">
+                  {isPlaying
+                    ? <Pause className="w-8 h-8 text-white" />
+                    : <Play className="w-8 h-8 text-white ml-1" />
+                  }
                 </button>
-                <button
-                  onClick={handleSkipNext}
-                  className="text-gray-400 hover:text-white transition-colors"
-                >
+                <button onClick={handleSkipNext} className="text-gray-400 hover:text-white transition-colors">
                   <SkipForward className="w-8 h-8" />
                 </button>
               </div>
@@ -293,12 +328,9 @@ export default function JamRoom() {
             <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-white">Queue</h3>
-                <button
-                  onClick={() => setShowSearch(true)}
-                  className="flex items-center gap-2 text-spotify-400 hover:text-spotify-300 transition-colors"
-                >
-                  <Plus className="w-5 h-5" />
-                  <span>Add Track</span>
+                <button onClick={() => setShowSearch(true)}
+                  className="flex items-center gap-2 text-spotify-400 hover:text-spotify-300 transition-colors">
+                  <Plus className="w-5 h-5" /> <span>Add Track</span>
                 </button>
               </div>
 
@@ -311,20 +343,21 @@ export default function JamRoom() {
                 <div className="space-y-3">
                   {queue.map((track, i) => (
                     <div key={i} className="flex items-center gap-4 p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors group">
-                      <img
-                        src={track.album_art}
-                        alt={track.name}
-                        className="w-12 h-12 rounded-lg object-cover"
-                      />
+                      <img src={track.album_art} alt={track.name} className="w-12 h-12 rounded-lg object-cover" />
                       <div className="flex-1 min-w-0">
                         <p className="text-white font-medium truncate">{track.name}</p>
                         <p className="text-sm text-gray-400 truncate">{track.artist}</p>
+                        {track.addedBy && (
+                          <p className="text-xs text-gray-500">Added by {track.addedBy}</p>
+                        )}
                       </div>
-                      <button
-                        onClick={() => handlePlayTrack(track)}
-                        className="text-spotify-400 hover:text-spotify-300 opacity-0 group-hover:opacity-100 transition-all"
-                      >
+                      <button onClick={() => handlePlayTrack(track)}
+                        className="text-spotify-400 hover:text-spotify-300 opacity-0 group-hover:opacity-100 transition-all">
                         <Play className="w-5 h-5" />
+                      </button>
+                      <button onClick={() => handleRemoveFromQueue(i)}
+                        className="text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 transition-all">
+                        <X className="w-4 h-4" />
                       </button>
                     </div>
                   ))}
@@ -341,13 +374,15 @@ export default function JamRoom() {
               <div className="space-y-3">
                 {participants.map((participant) => (
                   <div key={participant.id} className="flex items-center gap-3">
-                    <img
-                      src={participant.avatar_url}
-                      alt={participant.display_name}
-                      className="w-10 h-10 rounded-full object-cover"
-                    />
+                    <img src={participant.avatar_url} alt={participant.display_name}
+                      className="w-10 h-10 rounded-full object-cover" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-white font-medium truncate">{participant.display_name}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-white font-medium truncate">{participant.display_name}</p>
+                        {participant.is_host && (
+                          <Crown className="w-3.5 h-3.5 text-yellow-400 shrink-0" />
+                        )}
+                      </div>
                       <p className="text-xs text-gray-400">
                         {participant.is_host ? 'Host' : 'Listener'}
                       </p>
@@ -366,7 +401,7 @@ export default function JamRoom() {
 
               <div className="flex-1 overflow-y-auto space-y-3 mb-4">
                 {chatMessages.map((msg, i) => (
-                  <div key={i} className={`${msg.user_id === user?.id ? 'text-right' : ''}`}>
+                  <div key={msg.id || i} className={`${msg.user_id === user?.id ? 'text-right' : ''}`}>
                     <div className={`inline-block max-w-[80%] ${
                       msg.user_id === user?.id
                         ? 'bg-spotify-500 text-white'
@@ -379,6 +414,7 @@ export default function JamRoom() {
                     </div>
                   </div>
                 ))}
+                <div ref={chatEndRef} />
               </div>
 
               <form onSubmit={handleSendMessage} className="flex gap-2">
@@ -389,10 +425,8 @@ export default function JamRoom() {
                   placeholder="Type a message..."
                   className="flex-1 bg-white/10 border border-white/20 rounded-full px-4 py-2 text-white placeholder-gray-400 focus:outline-none focus:border-spotify-500"
                 />
-                <button
-                  type="submit"
-                  className="w-10 h-10 bg-spotify-500 rounded-full flex items-center justify-center hover:bg-spotify-400 transition-colors"
-                >
+                <button type="submit"
+                  className="w-10 h-10 bg-spotify-500 rounded-full flex items-center justify-center hover:bg-spotify-400 transition-colors">
                   <Send className="w-5 h-5 text-white" />
                 </button>
               </form>
@@ -422,11 +456,8 @@ export default function JamRoom() {
                 className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-spotify-500"
                 autoFocus
               />
-              <button
-                onClick={handleTrackSearch}
-                disabled={isSearching}
-                className="px-6 py-3 bg-spotify-500 text-white font-semibold rounded-xl hover:bg-spotify-400 transition-colors disabled:opacity-50"
-              >
+              <button onClick={handleTrackSearch} disabled={isSearching}
+                className="px-6 py-3 bg-spotify-500 text-white font-semibold rounded-xl hover:bg-spotify-400 transition-colors disabled:opacity-50">
                 {isSearching ? '...' : 'Search'}
               </button>
             </div>
@@ -434,16 +465,9 @@ export default function JamRoom() {
             {searchResults.length > 0 && (
               <div className="space-y-2 max-h-64 overflow-y-auto">
                 {searchResults.map((track) => (
-                  <div
-                    key={track.id}
-                    onClick={() => handleAddToQueue(track)}
-                    className="flex items-center gap-3 p-3 rounded-xl bg-white/5 hover:bg-white/10 cursor-pointer transition-colors"
-                  >
-                    <img
-                      src={track.album_art}
-                      alt={track.name}
-                      className="w-12 h-12 rounded-lg object-cover"
-                    />
+                  <div key={track.id} onClick={() => handleAddToQueue(track)}
+                    className="flex items-center gap-3 p-3 rounded-xl bg-white/5 hover:bg-white/10 cursor-pointer transition-colors">
+                    <img src={track.album_art} alt={track.name} className="w-12 h-12 rounded-lg object-cover" />
                     <div className="flex-1 min-w-0">
                       <p className="text-white font-medium truncate">{track.name}</p>
                       <p className="text-sm text-gray-400 truncate">{track.artist}</p>
@@ -476,16 +500,12 @@ export default function JamRoom() {
               This will end the session for all {participants.length} listeners. This cannot be undone.
             </p>
             <div className="flex gap-3">
-              <button
-                onClick={() => setShowEndConfirm(false)}
-                className="flex-1 px-4 py-3 bg-white/10 text-white rounded-xl hover:bg-white/20 transition-colors font-medium"
-              >
+              <button onClick={() => setShowEndConfirm(false)}
+                className="flex-1 px-4 py-3 bg-white/10 text-white rounded-xl hover:bg-white/20 transition-colors font-medium">
                 Cancel
               </button>
-              <button
-                onClick={handleEndSession}
-                className="flex-1 px-4 py-3 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors font-medium"
-              >
+              <button onClick={handleEndSession}
+                className="flex-1 px-4 py-3 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors font-medium">
                 End Session
               </button>
             </div>
